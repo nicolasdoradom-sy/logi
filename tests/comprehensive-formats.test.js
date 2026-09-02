@@ -131,3 +131,76 @@ assert.equal(totalCalc.gwTotalKg, 1100);
 assert.equal(totalCalc.volM3.toFixed(2), "1.20");
 
 console.log("✅ Multi-page Table Extraction pasó todas las pruebas!");
+
+console.log("--- Test 3: Prioridad de Total GW sobre GW unitario ---");
+assert.equal(context.findBestHeaderValue({"GW (Kgs)": 5.5, "Total GW (Kgs)": 55, "Ctns": 10}, ["total gw", "gross weight", "gw", "peso bruto total", "peso bruto"], { preferTotal: true }), 55);
+assert.equal(context.findBestHeaderValue({"1/2": "", "GW (Kgs)": 5.5, "Total GW (Kgs)": 55, "Ctns": 10}, ["total gw", "gross weight", "gw", "peso bruto total", "peso bruto"], { preferTotal: true }), 55);
+console.log("✅ Prioridad de Total GW sobre GW unitario pasó!");
+
+console.log("--- Test 4: Fixture 82 renglones - Total GW real 3299.8 kg ---");
+const q3Rows = 41;
+const q4Rows = 82 - q3Rows;
+const unit3 = 296.36 / q3Rows;
+const unit4 = 602.68 / q4Rows;
+const fixtureRows = Array.from({ length: 82 }, (_, index) => {
+  const ctns = index < q3Rows ? 3 : 4;
+  const gwUnit = index < q3Rows ? unit3 : unit4;
+  const totalGw = Number((gwUnit * ctns).toFixed(4));
+  return { gwUnit, totalGw, ctns };
+});
+const unitWeightSum = fixtureRows.reduce((sum, row) => sum + row.gwUnit, 0);
+const totalWeightSum = fixtureRows.reduce((sum, row) => sum + row.totalGw, 0);
+const selectedTotal = fixtureRows.reduce((sum, row) => sum + context.findBestHeaderValue({
+  "GW (Kgs)": row.gwUnit,
+  "Total GW (Kgs)": row.totalGw,
+  "Ctns": row.ctns
+}, ["total gw", "gross weight", "gw", "peso bruto total", "peso bruto"], { preferTotal: true }), 0);
+assert.equal(fixtureRows.length, 82, "Debe haber exactamente 82 renglones");
+assert.ok(Math.abs(unitWeightSum - 899.04) < 0.01, `La suma unitario debe ser 899.04 kg: ${unitWeightSum}`);
+assert.ok(Math.abs(totalWeightSum - 3299.8) < 0.01, `La suma total debe ser 3299.8 kg: ${totalWeightSum}`);
+assert.ok(Math.abs(selectedTotal - 3299.8) < 0.01, `El parser debe seleccionar el Total GW del renglón y no el peso unitario: ${selectedTotal}`);
+console.log(`✅ Fixture 82 renglones: suma unitaria ${unitWeightSum.toFixed(2)} kg; suma total ${totalWeightSum.toFixed(2)} kg; parser ${selectedTotal.toFixed(2)} kg`);
+
+console.log("--- Test 5: Fixture PDF realista con columnas del PDF y marcador 1/2 ---");
+const pageMarker = "1/2";
+const pdfLikeColumns = [
+  ["REF", 10], ["Qty (Pcs)", 140], ["Pcs/Ctns", 220], ["Ctns", 300], ["NW (Kgs)", 420], ["Total NW (Kgs)", 500],
+  ["GW (Kgs)", 580], ["Total GW (Kgs)", 660], ["Size/CBM", 760]
+];
+const pdfLikeItems = [];
+pdfLikeColumns.forEach(([str, x]) => pdfLikeItems.push({ str, transform: [1, 0, 0, 1, x, 760] }));
+
+for (let index = 0; index < 82; index++) {
+  const y = 720 - (index % 41) * 14;
+  const pageOffset = index >= 41 ? 2000 : 0;
+  const isSecondGroup = index >= 41;
+  const ctns = isSecondGroup ? 4 : 3;
+  const gwUnit = isSecondGroup ? (index === 81 ? 12.65 : 12.62) : 10;
+  const totalGw = isSecondGroup ? (index === 81 ? 50.60 : 50.48) : 30;
+  const values = [
+    `REF-${String(index + 1).padStart(3, "0")}`,
+    "1",
+    "1",
+    String(ctns),
+    `${gwUnit.toFixed(2).replace(".", ",")}`,
+    `${totalGw.toFixed(2).replace(".", ",")}`,
+    `${gwUnit.toFixed(2).replace(".", ",")}`,
+    `${totalGw.toFixed(2).replace(".", ",")}`,
+    "30x20x10 cm"
+  ];
+
+  if (index === 41) {
+    pdfLikeItems.push({ str: pageMarker, transform: [1, 0, 0, 1, 10, 700 - pageOffset] });
+  }
+
+  values.forEach((str, idx) => {
+    pdfLikeItems.push({ str, transform: [1, 0, 0, 1, pdfLikeColumns[idx][1], y - pageOffset] });
+  });
+}
+
+const pdfLikeResult = context.pdfTableRecords(pdfLikeItems);
+assert.equal(pdfLikeResult.records.length, 82, "Debe extraer 82 renglones del PDF realista");
+const pdfLikeWeightKg = pdfLikeResult.records.reduce((sum, row) => sum + ((Number(row.gw) || 0) * (Number(row.q) || 1) * 1000), 0);
+assert.ok(Math.abs(pdfLikeWeightKg - 3299.8) < 0.1, `El peso bruto calculado desde el PDF realista debe ser 3299.8 kg, pero fue ${pdfLikeWeightKg} kg`);
+assert.ok(Math.abs(pdfLikeResult.records.reduce((sum, row) => sum + Number(row.q || 0), 0) - 82) < 1e-9, "La cantidad total debe coincidir con 82 referencias");
+console.log(`✅ PDF realista validado: ${pdfLikeResult.records.length} renglones, peso bruto ${pdfLikeWeightKg.toFixed(2)} kg`);

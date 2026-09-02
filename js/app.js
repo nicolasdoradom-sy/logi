@@ -264,8 +264,15 @@ const PDF_HEADER_DEFINITIONS = [
 ];
 
 function normHeader(h){return String(h||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,"")}
+function stripPageMarkers(value){
+  return String(value ?? "")
+    .replace(/(^|\s)(?:p(?:ag(?:ina)?)?\.?|page)\s*\d+\s*\/\s*\d+(?=\s|$)/gi, "$1")
+    .replace(/(^|\s)\d+\s*\/\s*\d+(?=\s|$)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 function parseNumber(value){
- const raw=String(value??"").trim().replace(/\s/g,"");
+ const raw=stripPageMarkers(value).trim().replace(/\s/g,"");
  if(!raw)return NaN;
  const numeric=(raw.match(/[+-]?[0-9][0-9.,]*/) || [""])[0];
  if(!numeric)return NaN;
@@ -273,6 +280,37 @@ function parseNumber(value){
   ? (numeric.lastIndexOf(",")>numeric.lastIndexOf(".")?numeric.replace(/\./g,"").replace(",","."):numeric.replace(/,/g,""))
   : numeric.replace(",",".");
  return Number(normalized);
+}
+function findBestHeaderValue(rowMap, aliases, options={}){
+  const preferTotal = Boolean(options.preferTotal);
+  const list = Array.isArray(aliases) ? aliases : [aliases];
+  if(!rowMap || !Object.keys(rowMap).length) return NaN;
+
+  const scored = Object.entries(rowMap)
+    .map(([key, value]) => {
+      const keyNorm = normHeader(key);
+      const score = list.reduce((acc, alias) => {
+        const aliasNorm = normHeader(alias);
+        if(!aliasNorm) return acc;
+        if(!keyNorm || !aliasNorm) return acc;
+        if(keyNorm === aliasNorm) return acc + 100;
+        if(keyNorm.includes(aliasNorm) || aliasNorm.includes(keyNorm)) return acc + 40;
+        return acc;
+      }, 0);
+
+      const numeric = parseNumber(value);
+      const isTotal = /total|totale|totales|tot/i.test(String(key));
+      return { key, value, score, isTotal, numeric };
+    })
+    .filter(item => item.score > 0 && Number.isFinite(item.numeric));
+
+  if(!scored.length) return NaN;
+  scored.sort((a, b) => {
+    if(preferTotal && a.isTotal !== b.isTotal) return a.isTotal ? -1 : 1;
+    return b.score - a.score;
+  });
+
+  return scored[0].numeric;
 }
 function importValue(keys,names){
  for(const name of names){
@@ -282,7 +320,7 @@ function importValue(keys,names){
  const key=Object.keys(keys).find(candidate=>names.some(name=>normHeader(name).length>1&&candidate.includes(normHeader(name))));
  return key?keys[key]:undefined;
 }
-function normalizePdfText(value){return String(value||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim()}
+function normalizePdfText(value){return stripPageMarkers(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim()}
 
 function matchHeaderCategory(tokenText){
   const rawClean = tokenText.trim().toLowerCase();
@@ -462,7 +500,7 @@ function detectPdfTableColumns(headerRows){
 function extractCellFromRow(row, column){
   if(!column) return "";
   const cells = row.items.filter(item => item.x >= column.minX && item.x < column.maxX);
-  return cells.map(c => c.text).join(" ").trim();
+  return cells.map(c => stripPageMarkers(c.text)).join(" ").trim();
 }
 
 function pdfTableRecords(items){
@@ -548,21 +586,26 @@ function pdfTableRecords(items){
     const unitGW = colMap.totalGw?.unit || colMap.gwUnit?.unit || "kg";
     const unitNW = colMap.totalNw?.unit || colMap.nwUnit?.unit || "kg";
 
-    let grossKg = Number.isFinite(gwTotVal)
-      ? (unitGW === "t" ? gwTotVal * 1000 : unitGW === "lb" ? gwTotVal * 0.453592 : gwTotVal)
-      : Number.isFinite(gwUnitVal)
-      ? (unitGW === "t" ? gwUnitVal * 1000 * boxes : unitGW === "lb" ? gwUnitVal * 0.453592 * boxes : gwUnitVal * boxes)
-      : Number.isFinite(nwTotVal)
-      ? (unitNW === "t" ? nwTotVal * 1000 : nwTotVal)
-      : Number.isFinite(nwUnitVal)
-      ? (unitNW === "t" ? nwUnitVal * 1000 * boxes : nwUnitVal * boxes)
+    const toKg = (value, unit) => {
+      if(!Number.isFinite(value)) return NaN;
+      const normalizedUnit = String(unit || "kg").toLowerCase();
+      if(normalizedUnit.startsWith("t")) return value * 1000;
+      if(normalizedUnit.startsWith("lb")) return value * 0.45359237;
+      return value;
+    };
+
+    const rowGrossKg = Number.isFinite(gwTotVal) ? toKg(gwTotVal, unitGW)
+      : Number.isFinite(gwUnitVal) ? toKg(gwUnitVal, unitGW) * boxes
+      : Number.isFinite(nwTotVal) ? toKg(nwTotVal, unitNW)
+      : Number.isFinite(nwUnitVal) ? toKg(nwUnitVal, unitNW) * boxes
       : NaN;
 
-    let netKg = Number.isFinite(nwTotVal)
-      ? (unitNW === "t" ? nwTotVal * 1000 : nwTotVal)
-      : Number.isFinite(nwUnitVal)
-      ? (unitNW === "t" ? nwUnitVal * 1000 * boxes : nwUnitVal * boxes)
-      : grossKg;
+    const rowNetKg = Number.isFinite(nwTotVal) ? toKg(nwTotVal, unitNW)
+      : Number.isFinite(nwUnitVal) ? toKg(nwUnitVal, unitNW) * boxes
+      : rowGrossKg;
+
+    let grossKg = rowGrossKg;
+    let netKg = rowNetKg;
 
     const cbmVal = parseNumber(extractCellFromRow(row, colMap.vol));
     const volume = Number.isFinite(cbmVal) && cbmVal > 0
@@ -988,7 +1031,20 @@ function importarExcel(evt){
       const gwUnit=parseNumber(get("pesobruto","grossweight","gw","pesounitario","pesou","peso","weight","kg","kilos"));
       const nwUnit=parseNumber(get("pesoneto","netweight","nw"));
       
-      let pesoTotalKg=Number.isFinite(gwTotal)?gwTotal:Number.isFinite(gwUnit)?gwUnit*(Number.isFinite(boxesValue)?boxesValue:cant):Number.isFinite(nwTotal)?nwTotal:Number.isFinite(nwUnit)?nwUnit*(Number.isFinite(boxesValue)?boxesValue:cant):NaN;
+const totalByWeightColumn = findBestHeaderValue(keys, ["total gw","total gross weight","total weight","peso bruto total","gw total","peso total","total weight","gross weight"], { preferTotal: true });
+      const unitByWeightColumn = findBestHeaderValue(keys, ["gw","gross weight","peso bruto","peso unitario","peso por caja","gw per ctn","gw per box","unit gross weight"], { preferTotal: false });
+      const totalByNetColumn = findBestHeaderValue(keys, ["total nw","total net weight","peso neto total","nw total","net weight"], { preferTotal: true });
+      const unitByNetColumn = findBestHeaderValue(keys, ["nw","net weight","peso neto","peso neto unitario","unit net weight"], { preferTotal: false });
+
+      let pesoTotalKg = Number.isFinite(totalByWeightColumn) ? totalByWeightColumn
+        : Number.isFinite(unitByWeightColumn) ? unitByWeightColumn * (Number.isFinite(boxesValue) ? boxesValue : cant)
+        : Number.isFinite(totalByNetColumn) ? totalByNetColumn
+        : Number.isFinite(unitByNetColumn) ? unitByNetColumn * (Number.isFinite(boxesValue) ? boxesValue : cant)
+        : Number.isFinite(gwTotal) ? gwTotal
+        : Number.isFinite(gwUnit) ? gwUnit * (Number.isFinite(boxesValue) ? boxesValue : cant)
+        : Number.isFinite(nwTotal) ? nwTotal
+        : Number.isFinite(nwUnit) ? nwUnit * (Number.isFinite(boxesValue) ? boxesValue : cant)
+        : NaN;
       
       const unidad=String(get("unidad","unidadmedida","unidaddemedida","dimensionunit")||(/\bmm\b/i.test(headerText)?"mm":/\bmetros?\b|\(m\)/i.test(headerText)?"m":"cm")).toLowerCase();
       const unidadPeso=String(get("unidadpeso","unidaddepeso","undpeso","weightunit")||(/\blb?s\b/i.test(headerText)?"lb":/\bton(?:eladas?)?\b/i.test(headerText)?"t":"kg")).toLowerCase();
@@ -1127,11 +1183,11 @@ function exportarExcel(){
   Cantidad:Math.max(1,num("contCant")),
   Largo:"",Ancho:"",Alto:"",
   Unidad:"m",
-  Peso:num("contMerc")+num("contTara"),
+  Peso:(num("contMerc")+num("contTara"))*Math.max(1,num("contCant")),
   "Unidad de peso":"kg"
  }]:pieces.map(piece=>({
   Descripción:piece.desc,Cantidad:piece.q,Largo:piece.L,Ancho:piece.W,Alto:piece.H,
-  Unidad:"m",Peso:piece.wt*1000,"Unidad de peso":"kg"
+  Unidad:"m",Peso:(Number(piece.gw ?? piece.wt ?? 0) * Number(piece.q || 1) * 1000),"Unidad de peso":"kg"
  }));
  if(!rows.length){alert("No hay datos de carga para exportar.");return}
  const sheet=XLSX.utils.json_to_sheet(rows);
