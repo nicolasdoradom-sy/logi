@@ -326,24 +326,34 @@ function matchHeaderCategory(tokenText){
   const rawClean = tokenText.trim().toLowerCase();
   const nToken = normHeader(tokenText);
   if(!nToken) return null;
-  
+
+  let bestMatch = { key: null, score: -Infinity, alias: "" };
+
   for(const def of PDF_HEADER_DEFINITIONS){
     for(const alias of def.aliases){
       const nAlias = normHeader(alias);
       if(!nAlias) continue;
-      
-      if(nToken === nAlias) return def.key;
-      
-      if(alias.length === 1){
-        if(rawClean === alias) return def.key;
-      } else {
-        if(nToken.length >= nAlias.length && (nToken.startsWith(nAlias) || nToken.endsWith(nAlias) || nToken.includes(nAlias))){
-          return def.key;
-        }
+
+      let score = 0;
+      const isGenericAlias = ["gw","peso","weight","nw","net weight","gross weight","total"].includes(nAlias) || ["gw","peso","weight","nw","net weight","gross weight","total"].includes(nAlias);
+
+      if(nToken === nAlias) score += 200;
+      else if(nToken.startsWith(nAlias) || nToken.endsWith(nAlias) || nToken.includes(nAlias)) score += 120;
+      else if(alias.length === 1 && rawClean === alias.toLowerCase()) score += 50;
+
+      if(/total/.test(alias.toLowerCase())) score += 80;
+      if(/gross|net|weight|peso/.test(alias.toLowerCase())) score += 15;
+      if(/(gw|peso|weight|nw)\b/.test(alias.toLowerCase()) && !/total/.test(alias.toLowerCase())) score -= 60;
+      if(isGenericAlias) score -= 50;
+      score += nAlias.length;
+
+      if(score > bestMatch.score){
+        bestMatch = { key: def.key, score, alias };
       }
     }
   }
-  return null;
+
+  return bestMatch.key;
 }
 
 function findPdfMeasurement(text,names){
@@ -463,27 +473,31 @@ function detectPdfTableColumns(headerRows){
 
   if(uniqueKeys.size < 3 || !(hasDesc && (hasQty || hasDimOrWt))) return null;
 
-  // Disambiguate when multiple GW or NW columns exist (e.g. Total GW vs Unit GW)
+  // Disambiguate when multiple GW or NW columns exist (e.g. Total GW vs Unit GW).
+  // Prefer explicit total labels and longer aliases over generic ones like "gw"/"peso"/"weight".
   const gwCols = matchedColumns.filter(c => c.key === "totalGw" || c.key === "gwUnit");
   if(gwCols.length > 1){
-    const totCol = gwCols.find(c => /total|tot/i.test(c.rawText || ""));
-    const unitCol = gwCols.find(c => c !== totCol);
-    if(totCol && unitCol){
-      totCol.key = "totalGw";
+    const totalCandidates = gwCols.filter(c => /total|totale|totales|tot\b/i.test(c.rawText || ""));
+    const totalCol = totalCandidates.length ? totalCandidates.sort((a, b) => a.x - b.x)[0] : gwCols.sort((a, b) => b.x - a.x)[0];
+    const unitCol = gwCols.find(c => c !== totalCol) || gwCols.sort((a, b) => a.x - b.x)[0];
+    if(totalCol && unitCol){
+      totalCol.key = "totalGw";
       unitCol.key = "gwUnit";
     }
   }
   const nwCols = matchedColumns.filter(c => c.key === "totalNw" || c.key === "nwUnit");
   if(nwCols.length > 1){
-    const totCol = nwCols.find(c => /total|tot/i.test(c.rawText || ""));
-    const unitCol = nwCols.find(c => c !== totCol);
-    if(totCol && unitCol){
-      totCol.key = "totalNw";
+    const totalCandidates = nwCols.filter(c => /total|totale|totales|tot\b/i.test(c.rawText || ""));
+    const totalCol = totalCandidates.length ? totalCandidates.sort((a, b) => a.x - b.x)[0] : nwCols.sort((a, b) => b.x - a.x)[0];
+    const unitCol = nwCols.find(c => c !== totalCol) || nwCols.sort((a, b) => a.x - b.x)[0];
+    if(totalCol && unitCol){
+      totalCol.key = "totalNw";
       unitCol.key = "nwUnit";
     }
   }
 
   matchedColumns.sort((a, b) => a.x - b.x);
+  console.log("[detectPdfTableColumns] final columns:", matchedColumns.map(c => ({ key: c.key, rawText: c.rawText, x: c.x })));
 
   for(let i = 0; i < matchedColumns.length; i++){
     const curr = matchedColumns[i];
@@ -540,6 +554,12 @@ function pdfTableRecords(items){
     if(/^(?:total|subtotal|totales|cantidad total|peso neto|peso bruto|volume total|volumen total|grand total|resumen)\b/i.test(normalized)) continue;
     if(detectPdfTableColumns([row])) continue;
     if(!/\d/.test(row.text)) continue;
+
+    const totalGwCell = extractCellFromRow(row, colMap.totalGw);
+    const gwUnitCell = extractCellFromRow(row, colMap.gwUnit);
+    if(r < startRowIdx + 5) {
+      console.log("[pdfTableRecords] row", { rowIndex: r, totalGw: totalGwCell, gwUnit: gwUnitCell, rawRow: row.text });
+    }
 
     const descText = extractCellFromRow(row, colMap.desc);
     const refText = extractCellFromRow(row, colMap.ref);

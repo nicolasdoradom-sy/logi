@@ -137,6 +137,23 @@ assert.equal(context.findBestHeaderValue({"GW (Kgs)": 5.5, "Total GW (Kgs)": 55,
 assert.equal(context.findBestHeaderValue({"1/2": "", "GW (Kgs)": 5.5, "Total GW (Kgs)": 55, "Ctns": 10}, ["total gw", "gross weight", "gw", "peso bruto total", "peso bruto"], { preferTotal: true }), 55);
 console.log("✅ Prioridad de Total GW sobre GW unitario pasó!");
 
+console.log("--- Test 3b: Desambiguación robusta de encabezados GW vs Total GW ---");
+const ambiguousHeaderRow = {
+  items: [
+    { text: "GW", x: 130, width: 48 },
+    { text: "Total GW", x: 310, width: 92 },
+    { text: "(Kgs)", x: 130, width: 48 },
+    { text: "(Kgs)", x: 310, width: 92 }
+  ]
+};
+const ambiguousCols = context.detectPdfTableColumns([ambiguousHeaderRow]);
+assert.ok(ambiguousCols, "Debe detectar ambas columnas del encabezado ambiguo");
+const keys = ambiguousCols.map(col => col.key);
+assert.ok(keys.includes("gwUnit"), "Debe reconocer la columna GW unitario como gwUnit");
+assert.ok(keys.includes("totalGw"), "Debe reconocer la columna Total GW como totalGw");
+assert.equal(keys.filter(key => key === "totalGw").length, 1, "No debe colapsar ambas columnas en totalGw");
+console.log("✅ Desambiguación robusta de GW vs Total GW pasó!");
+
 console.log("--- Test 4: Fixture 82 renglones - Total GW real 3299.8 kg ---");
 const q3Rows = 41;
 const q4Rows = 82 - q3Rows;
