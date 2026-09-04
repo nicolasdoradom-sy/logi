@@ -335,15 +335,15 @@ function matchHeaderCategory(tokenText){
       if(!nAlias) continue;
 
       let score = 0;
-      const isGenericAlias = ["gw","peso","weight","nw","net weight","gross weight","total"].includes(nAlias) || ["gw","peso","weight","nw","net weight","gross weight","total"].includes(nAlias);
-
-      if(nToken === nAlias) score += 200;
-      else if(nToken.startsWith(nAlias) || nToken.endsWith(nAlias) || nToken.includes(nAlias)) score += 120;
-      else if(alias.length === 1 && rawClean === alias.toLowerCase()) score += 50;
+      const isGenericAlias = ["gw","peso","weight","nw","net weight","gross weight","total"].includes(nAlias);
+      if(nToken === nAlias) score = 200;
+      else if(nAlias.length > 1 && (nToken.startsWith(nAlias) || nToken.endsWith(nAlias) || nToken.includes(nAlias))) score = 120;
+      else if(alias.length === 1 && rawClean === alias.toLowerCase()) score = 50;
+      else continue;
 
       if(/total/.test(alias.toLowerCase())) score += 80;
       if(/gross|net|weight|peso/.test(alias.toLowerCase())) score += 15;
-      if(/(gw|peso|weight|nw)\b/.test(alias.toLowerCase()) && !/total/.test(alias.toLowerCase())) score -= 60;
+      if(/\b(gw|peso|weight|nw)\b/i.test(alias.toLowerCase()) && !/total/.test(alias.toLowerCase())) score -= 60;
       if(isGenericAlias) score -= 50;
       score += nAlias.length;
 
@@ -353,7 +353,7 @@ function matchHeaderCategory(tokenText){
     }
   }
 
-  return bestMatch.key;
+  return bestMatch.key ? bestMatch : null;
 }
 
 function findPdfMeasurement(text,names){
@@ -425,20 +425,35 @@ function detectPdfTableColumns(headerRows){
   headerRows.forEach(hr => combinedItems.push(...hr.items));
   combinedItems.sort((a, b) => a.x - b.x);
 
+  const groupedItems = [];
+  combinedItems.forEach(item => {
+    const previous = groupedItems[groupedItems.length - 1];
+    if(previous && Math.abs(previous.x - item.x) < 1){
+      previous.text += " " + item.text;
+      previous.width = Math.max(previous.width || 0, item.width || 0);
+    }else{
+      groupedItems.push({ ...item });
+    }
+  });
+
   const matchedColumns = [];
   const claimedIndices = new Set();
 
-  for(let i = 0; i < combinedItems.length; i++){
+  for(let i = 0; i < groupedItems.length; i++){
     if(claimedIndices.has(i)) continue;
-    const item = combinedItems[i];
+    const item = groupedItems[i];
     
-    let key = matchHeaderCategory(item.text);
+    const directMatch = matchHeaderCategory(item.text);
+    let key = directMatch?.key || null;
+    let score = directMatch?.score ?? null;
     let spanCount = 1;
 
-    if(!key && i < combinedItems.length - 1 && !claimedIndices.has(i + 1)){
-      const nextItem = combinedItems[i+1];
+    if(!key && i < groupedItems.length - 1 && !claimedIndices.has(i + 1)){
+      const nextItem = groupedItems[i+1];
       if(Math.abs(nextItem.x - (item.x + (item.width || 0))) < 50){
-        key = matchHeaderCategory(item.text + " " + nextItem.text);
+        const combinedMatch = matchHeaderCategory(item.text + " " + nextItem.text);
+        key = combinedMatch?.key || null;
+        score = combinedMatch?.score ?? null;
         if(key) spanCount = 2;
       }
     }
@@ -461,17 +476,11 @@ function detectPdfTableColumns(headerRows){
         x: item.x,
         width: item.width || 40,
         unit: explicitUnit,
-        rawText: item.text + (spanCount > 1 ? " " + combinedItems[i+1].text : "")
+        rawText: item.text + (spanCount > 1 ? " " + combinedItems[i+1].text : ""),
+        score
       });
     }
   }
-
-  const uniqueKeys = new Set(matchedColumns.map(c => c.key));
-  const hasDesc = uniqueKeys.has("desc") || uniqueKeys.has("ref") || uniqueKeys.has("code");
-  const hasQty = uniqueKeys.has("qty") || uniqueKeys.has("boxes");
-  const hasDimOrWt = uniqueKeys.has("size") || uniqueKeys.has("len") || uniqueKeys.has("width") || uniqueKeys.has("height") || uniqueKeys.has("totalGw") || uniqueKeys.has("gwUnit");
-
-  if(uniqueKeys.size < 3 || !(hasDesc && (hasQty || hasDimOrWt))) return null;
 
   // Disambiguate when multiple GW or NW columns exist (e.g. Total GW vs Unit GW).
   // Prefer explicit total labels and longer aliases over generic ones like "gw"/"peso"/"weight".
@@ -496,8 +505,21 @@ function detectPdfTableColumns(headerRows){
     }
   }
 
+  const uniqueKeys = new Set(matchedColumns.map(c => c.key));
+  const hasDesc = uniqueKeys.has("desc") || uniqueKeys.has("ref") || uniqueKeys.has("code");
+  const hasQty = uniqueKeys.has("qty") || uniqueKeys.has("boxes");
+  const hasDimOrWt = uniqueKeys.has("size") || uniqueKeys.has("len") || uniqueKeys.has("width") || uniqueKeys.has("height") || uniqueKeys.has("totalGw") || uniqueKeys.has("gwUnit");
+  const hasWeightPair = uniqueKeys.has("totalGw") && uniqueKeys.has("gwUnit");
+  const diagnosticColumns = matchedColumns.map(c => ({ key: c.key, rawText: c.rawText, score: c.score ?? null, x: c.x }));
+  console.log("[detectPdfTableColumns] columns:", diagnosticColumns);
+
+  if((uniqueKeys.size < 3 && !hasWeightPair) || !(hasWeightPair || (hasDesc && (hasQty || hasDimOrWt)))){
+    console.log("[detectPdfTableColumns] rejected:", { uniqueKeys: [...uniqueKeys], hasDesc, hasQty, hasDimOrWt, hasWeightPair, columns: diagnosticColumns });
+    return null;
+  }
+
   matchedColumns.sort((a, b) => a.x - b.x);
-  console.log("[detectPdfTableColumns] final columns:", matchedColumns.map(c => ({ key: c.key, rawText: c.rawText, x: c.x })));
+  console.log("[detectPdfTableColumns] final columns:", matchedColumns.map(c => ({ key: c.key, rawText: c.rawText, score: c.score ?? null, x: c.x })));
 
   for(let i = 0; i < matchedColumns.length; i++){
     const curr = matchedColumns[i];
