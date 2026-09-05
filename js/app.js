@@ -674,7 +674,83 @@ function extractCellFromRow(row, column){
   return cells.map(c => stripPageMarkers(c.text)).join(" ").trim();
 }
 
+function pdfHierarchicalRecords(items){
+  const groupMarkers=items.filter(item=>/^(?:pallet|box)$/i.test(stripPageMarkers(item.str||item.text||"").trim())).map(item=>({
+    y:item.transform?.[5]??item.y,
+    marker:stripPageMarkers(item.str||item.text||"").trim()
+  })).sort((a,b)=>b.y-a.y);
+  if(groupMarkers.length<2)return null;
+
+  const numericItems=items.map(item=>({
+    ...item,
+    x:item.transform?.[4]??item.x,
+    y:item.transform?.[5]??item.y,
+    text:stripPageMarkers(item.str||item.text||"").trim()
+  }));
+  const nearValue=(label, tolerance=3)=>numericItems
+    .filter(item=>item.x>label.x&&item.x-label.x<90&&Math.abs(item.y-label.y)<=tolerance&&/^[0-9][0-9.,]*$/.test(item.text))
+    .sort((a,b)=>a.x-b.x)[0];
+  const groups=groupMarkers.map((marker,index)=>{
+    const labels=numericItems.filter(item=>item.y>=marker.y-18&&item.y<=marker.y+18);
+    const findLabel=pattern=>labels.find(item=>pattern.test(item.text));
+    const largeLabel=findLabel(/^large\s*:/i);
+    const widthLabel=findLabel(/^width\s*:/i);
+    const heightLabel=findLabel(/^height\s*:/i);
+    const boxesLabel=findLabel(/^cajas\s*:/i);
+    const values={
+      L:largeLabel?parseNumber(nearValue(largeLabel)?.text):NaN,
+      W:widthLabel?parseNumber(nearValue(widthLabel)?.text):NaN,
+      H:heightLabel?parseNumber(nearValue(heightLabel)?.text):NaN,
+      boxes:boxesLabel?parseNumber(numericItems.filter(item=>item.x>boxesLabel.x&&item.x<90&&Math.abs(item.y-boxesLabel.y)<=3&&/^[0-9][0-9.,]*$/.test(item.text)).sort((a,b)=>b.x-a.x)[0]?.text):NaN
+    };
+    console.log("[pdfHierarchicalRecords] group",{index:index+1,marker:marker.marker,dimensions:values});
+    return {...marker,...values,nextY:groupMarkers[index+1]?.y??-Infinity};
+  });
+
+  const referenceItems=numericItems.filter(item=>item.x>=85&&item.x<=112&&/^\d{1,3}$/.test(item.text)&&Number(item.text)>=1&&Number(item.text)<=242)
+    .sort((a,b)=>b.y-a.y);
+  const uniqueReferences=[];
+  const seen=new Set();
+  referenceItems.forEach(item=>{
+    const reference=Number(item.text);
+    if(seen.has(reference))return;
+    seen.add(reference);
+    const group=groups.find(candidate=>candidate.y>item.y&&candidate.nextY<item.y);
+    const sameLine=numericItems.filter(candidate=>Math.abs(candidate.y-item.y)<=3);
+    const quantityItem=sameLine.find(candidate=>candidate.x>700&&/^\d/.test(candidate.text));
+    const netItem=sameLine.find(candidate=>candidate.x>=620&&candidate.x<=700&&/^[0-9][0-9.,]*$/.test(candidate.text));
+    const description=sameLine.filter(candidate=>candidate.x>=300&&candidate.x<620).map(candidate=>candidate.text).join(" ").trim();
+    const code=sameLine.filter(candidate=>candidate.x>=210&&candidate.x<300).map(candidate=>candidate.text).join(" ").trim();
+    const quantity=quantityItem?parseNumber(quantityItem.text):1;
+    const netKg=netItem?parseNumber(netItem.text):NaN;
+    uniqueReferences.push({
+      desc:`${reference}${code||description?` - ${code||description}`:""}`,
+      q:Number.isFinite(quantity)&&quantity>0?quantity:1,
+      boxes:null,L:null,W:null,H:null,volume:null,
+      wt:null,gw:null,nw:Number.isFinite(netKg)?netKg/1000:null,
+      incomplete:true,apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false,
+      hierarchicalGroup:group?.marker||null
+    });
+  });
+  if(uniqueReferences.length<20)return null;
+
+  const rows=numericItems.map(item=>item.text).join(" ");
+  const totalLabel=numericItems.filter(item=>/^totals?\s*:??$/i.test(item.text)).map(label=>({label,values:numericItems.filter(item=>Math.abs(item.y-label.y)<=4&&item.x>label.x&&/^[0-9][0-9.,]*$/.test(item.text)).sort((a,b)=>a.x-b.x)})).filter(candidate=>candidate.values.length>=5).at(-1);
+  const totalValues=totalLabel?.values||[];
+  const declared=totalValues.length>=5?{
+    volume:parseNumber(totalValues[1].text),netVolume:parseNumber(totalValues[0].text),net:parseNumber(totalValues[2].text),gross:parseNumber(totalValues[3].text),quantity:parseNumber(totalValues[4].text),references:uniqueReferences.length
+  }:{references:uniqueReferences.length};
+  const packageMatch=/total\s*:\s*([0-9][0-9.,]*)\s+cajas?\s+o\s+bultos?/i.exec(rows);
+  if(packageMatch)declared.boxes=parseNumber(packageMatch[1]);
+  const area=groups.reduce((sum,group)=>sum+(Number.isFinite(group.L)&&Number.isFinite(group.W)?group.L/100*group.W/100:0),0);
+  declared.area=area;
+  console.log("[detectPdfHierarchicalPdf] detected",{groups:groups.length,references:uniqueReferences.length,declared,area:area.toFixed(2)});
+  return {records:uniqueReferences,totals:declared,hierarchical:true};
+}
+
 function pdfTableRecords(items){
+  const hierarchical=pdfHierarchicalRecords(items);
+  if(hierarchical)return hierarchical;
   const rows = pdfRows(items);
   if(rows.length < 2) return { records: [], totals: {} };
 
@@ -1168,6 +1244,7 @@ async function importarPDF(file){
   if(Number.isFinite(declaredTotals.gross))pdfTotalsOverride.weight=declaredTotals.gross/1000;
   if(Number.isFinite(declaredTotals.net))pdfTotalsOverride.net=declaredTotals.net/1000;
   if(Number.isFinite(declaredTotals.volume))pdfTotalsOverride.volume=declaredTotals.volume;
+  if(Number.isFinite(declaredTotals.area))pdfTotalsOverride.area=declaredTotals.area;
   renderPieces();
   updateDashboard();
  }
