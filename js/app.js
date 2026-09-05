@@ -288,6 +288,11 @@ function parseNumber(value){
   : numeric.replace(",",".");
  return Number(normalized);
 }
+function parseHierarchicalTotal(value){
+ const raw=stripPageMarkers(value).replace(/\s/g,"");
+ if(/^[-+]?\d{1,3}(?:,\d{3})+$/.test(raw))return Number(raw.replace(/,/g,""));
+ return parseNumber(raw);
+}
 function findBestHeaderValue(rowMap, aliases, options={}){
   const preferTotal = Boolean(options.preferTotal);
   const list = Array.isArray(aliases) ? aliases : [aliases];
@@ -738,7 +743,7 @@ function pdfHierarchicalRecords(items){
   const totalLabel=numericItems.filter(item=>/^totals?\s*:??$/i.test(item.text)).map(label=>({label,values:numericItems.filter(item=>Math.abs(item.y-label.y)<=4&&item.x>label.x&&/^[0-9][0-9.,]*$/.test(item.text)).sort((a,b)=>a.x-b.x)})).filter(candidate=>candidate.values.length>=5).at(-1);
   const totalValues=totalLabel?.values||[];
   const declared=totalValues.length>=5?{
-    volume:parseNumber(totalValues[1].text),netVolume:parseNumber(totalValues[0].text),net:parseNumber(totalValues[2].text),gross:parseNumber(totalValues[3].text),quantity:parseNumber(totalValues[4].text),references:uniqueReferences.length
+    volume:parseHierarchicalTotal(totalValues[1].text),netVolume:parseHierarchicalTotal(totalValues[0].text),net:parseHierarchicalTotal(totalValues[2].text),gross:parseHierarchicalTotal(totalValues[3].text),quantity:parseHierarchicalTotal(totalValues[4].text),references:uniqueReferences.length
   }:{references:uniqueReferences.length};
   const packageMatch=/total\s*:\s*([0-9][0-9.,]*)\s+cajas?\s+o\s+bultos?/i.exec(rows);
   if(packageMatch)declared.boxes=parseNumber(packageMatch[1]);
