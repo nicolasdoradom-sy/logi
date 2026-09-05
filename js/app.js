@@ -180,19 +180,21 @@ function renderPieces(){
  if(!pieces.length){el.innerHTML='<div class="empty">No hay referencias guardadas. Agrega la primera pieza o grupo, o impórtalas desde Excel o PDF.</div>'}
  else el.innerHTML=pieces.map((p,i)=>{
   const boxesLabel = p.boxes ? ` · ${p.boxes} cajas` : "";
-  const vol = (Number.isFinite(Number(p.volume))?Number(p.volume):p.L*p.W*p.H*(p.boxes||p.q)).toFixed(3);
-  const area = (p.L*p.W*(p.boxes||p.q)).toFixed(2);
-  const pesoTotT = (p.wt*p.q).toFixed(3);
-  const pesoTotKg = ((p.wt*p.q)*1000).toFixed(1);
-  const dimCm = `${Math.round(p.L*100)} × ${Math.round(p.W*100)} × ${Math.round(p.H*100)} cm`;
-  const dimM = `${p.L.toFixed(2)} × ${p.W.toFixed(2)} × ${p.H.toFixed(2)} m`;
+  const hasDimensions=Number.isFinite(p.L)&&Number.isFinite(p.W)&&Number.isFinite(p.H);
+  const hasWeight=Number.isFinite(p.wt);
+  const vol = Number.isFinite(Number(p.volume))?Number(p.volume).toFixed(3):hasDimensions?(p.L*p.W*p.H*(p.boxes||p.q)).toFixed(3):"N/D";
+  const area = hasDimensions?(p.L*p.W*(p.boxes||p.q)).toFixed(2):"N/D";
+  const pesoTotT = hasWeight?(p.wt*p.q).toFixed(3):"N/D";
+  const pesoTotKg = hasWeight?((p.wt*p.q)*1000).toFixed(1):"N/D";
+  const dimCm = hasDimensions?`${Math.round(p.L*100)} × ${Math.round(p.W*100)} × ${Math.round(p.H*100)} cm`:"N/D";
+  const dimM = hasDimensions?`${p.L.toFixed(2)} × ${p.W.toFixed(2)} × ${p.H.toFixed(2)} m`:"N/D";
   return `<div class="piece"><div class="piece-grid">
  <div><b>${esc(p.desc)}</b><small>${p.q} und${boxesLabel} · ${dimCm} <span style="color:#8f9bad">(${dimM})</span></small></div>
  <div><small>Peso</small><b>${pesoTotT} t</b> <span style="font-size:10px;color:#8f9bad">(${pesoTotKg} kg)</span></div>
  <div><small>Volumen</small><b>${vol} m³</b></div>
  <div><small>Área piso</small><b>${area} m²</b></div>
  <div><small>Apilable</small><b>${p.apilable?"Sí":"No"}</b></div>
- <div><small>Estado</small><b>${p.peligrosa?"Peligrosa":p.fragil?"Frágil":"Normal"}</b></div>
+ <div><small>Estado</small><b>${p.incomplete?"Incompleta":p.peligrosa?"Peligrosa":p.fragil?"Frágil":"Normal"}</b></div>
  <div style="display:flex;gap:5px"><button class="iconbtn" onclick="editarPieza(${i})" title="Editar">✎</button><button class="iconbtn" onclick="eliminarPieza(${i})" title="Eliminar">×</button></div>
  </div></div>`;
  }).join("");
@@ -249,6 +251,7 @@ const PDF_HEADER_DEFINITIONS = [
   { key: "desc", aliases: ["descripcion de la mercancia", "descripcion del producto", "commodity description", "equipo / carga", "descripcion", "description", "detalle", "producto", "product", "mercancia", "mercancía", "articulo", "artículo", "material", "nombre", "especificacion", "desc", "commodity"] },
   { key: "size", aliases: ["dimensions (lxwxh cm)", "dimensions (cm)", "dimensiones (cm)", "dimensiones (m)", "medidas (cm)", "medidas (m)", "size/cbm", "size", "cbm", "dimensiones", "dimension", "medidas", "medida", "tamano", "lxwxh", "l x a x h", "dim (cm)", "dim (m)", "dim (mm)", "medidas (mts)", "dimensiones (mts)"] },
   { key: "totalGw", aliases: ["total gw (kgs)", "total gw", "total gross weight", "peso bruto total", "gw total", "total weight", "total gross wt", "peso bruto tot", "peso total (t)", "peso total (ton)", "peso total (kg)", "peso total", "peso bruto (kg)", "peso (kg)", "peso (t)", "peso (ton)", "gross weight (kgs)", "gross weight", "peso bruto", "gw (kgs)", "gw", "peso", "weight"] },
+  { key: "weightUnit", aliases: ["unid peso", "unidad peso", "weight unit", "unit weight", "weight uom", "peso uom"] },
   { key: "totalNw", aliases: ["total nw (kgs)", "total nw", "total net weight", "peso neto total", "nw total", "total net wt", "peso neto (kg)", "peso neto (t)", "peso neto", "net weight (kgs)", "net weight", "nw (kgs)", "nw"] },
   { key: "gwUnit", aliases: ["peso bruto unitario", "peso bruto por caja", "peso unitario", "gw/ctn", "gw/box", "peso x caja", "peso por bulto", "peso unit (kg)", "peso u (t)", "peso/u", "peso unit", "unit gw", "unit gross weight", "unit weight", "gw per ctn", "gw per box"] },
   { key: "nwUnit", aliases: ["peso neto unitario", "peso neto por caja", "nw/ctn", "nw/box", "p. neto unit", "unit nw", "unit net weight"] },
@@ -258,6 +261,7 @@ const PDF_HEADER_DEFINITIONS = [
   { key: "len", aliases: ["largo (cm)", "largo (m)", "largo (mm)", "length (cm)", "length (m)", "largo", "longitud", "length", "l (cm)", "l (m)", "l (mm)", "l"] },
   { key: "width", aliases: ["ancho (cm)", "ancho (m)", "ancho (mm)", "width (cm)", "width (m)", "ancho", "width", "wide", "w (cm)", "w (m)", "w (mm)", "w", "a"] },
   { key: "height", aliases: ["alto (cm)", "alto (m)", "alto (mm)", "height (cm)", "height (m)", "alto", "altura", "height", "h (cm)", "h (m)", "h (mm)", "h"] },
+  { key: "dimUnit", aliases: ["unid dim", "unidad dimension", "unidad dimensiones", "dimension unit", "unit dimension", "dim unit", "dim"] },
   { key: "ref", aliases: ["referencia n°", "referencia no", "part number", "codigo producto", "referencia", "reference", "part no", "item code", "sku", "modelo", "ref"] },
   { key: "code", aliases: ["commodity item", "carton no", "awb item", "item no", "ctn no", "bulto no", "box no", "codigo", "code", "posicion", "ítem", "item", "pos", "nro", "no", "sec"] },
   { key: "vol", aliases: ["volumen total", "volume (cbm)", "volume (m3)", "volumen (m3)", "cbm", "volumen", "volume", "m3", "cubicaje"] }
@@ -368,23 +372,59 @@ function extractedDescription(text){
   if(match)return match[1].replace(/\s+(?:(?:qty|quantity|cantidad|cant|peso|weight|wt|gw|bultos?|cajas?|volume|volumen|largo|longitud|length|ancho|width|alto|height)\b).*$/i,"").replace(/\s+/g," ").trim();
   return null;
 }
+function mergeExtractedLines(lines){
+  const merged=[];
+  lines.map(line=>String(line||"").trim()).filter(Boolean).forEach(line=>{
+    const startsRecord=/^(?:item|ítem|row|line)\s*\d+\b|^\d+\s+(?=[A-WYZÁÉÍÓÚÑ])/i.test(line);
+    if(startsRecord||!merged.length)merged.push(line);
+    else merged[merged.length-1]=`${merged[merged.length-1]} ${line}`;
+  });
+  return merged;
+}
 function extractedReference(text){
-  const match=/(?:referencia|reference|sku|part\s*no\.?|codigo|c[oó]digo|ref\.?)\s*[:#=-]\s*([\w./-]+)/i.exec(text);
-  return match?match[1].trim():null;
+  const match=/(?:referencia|reference|sku|part\s*no\.?|codigo|c[oó]digo|ref\.?)\s*(?:[:#=-]\s*|\s+)([\w./-]+)/i.exec(text);
+  return match?match[1].replace(/[.,;:]+$/g,"").trim():null;
+}
+function extractedReferencesToPieces(result){
+  return (result?.referencias||[]).map(reference=>{
+    const hasValue=value=>value!==null&&value!==undefined&&Number.isFinite(Number(value));
+    const quantity=Number(reference.cantidad)>0?Number(reference.cantidad):1;
+    const weightKg=hasValue(reference.peso_kg)?Number(reference.peso_kg):null;
+    return {
+      desc:reference.descripcion||reference.referencia||"Referencia importada",
+      ref:reference.referencia,
+      q:quantity,
+      boxes:hasValue(reference.bultos)?Number(reference.bultos):quantity,
+      L:hasValue(reference.largo_cm)?Number(reference.largo_cm)/100:null,
+      W:hasValue(reference.ancho_cm)?Number(reference.ancho_cm)/100:null,
+      H:hasValue(reference.alto_cm)?Number(reference.alto_cm)/100:null,
+      volume:hasValue(reference.volumen_m3)?Number(reference.volumen_m3):(
+        hasValue(reference.largo_cm)&&hasValue(reference.ancho_cm)&&hasValue(reference.alto_cm)
+          ? Number(reference.largo_cm)*Number(reference.ancho_cm)*Number(reference.alto_cm)/1000000*quantity
+          : null
+      ),
+      wt:weightKg===null?null:weightKg/1000,
+      gw:weightKg===null?null:weightKg/1000,
+      nw:weightKg===null?null:weightKg/1000,
+      incomplete:Boolean(reference.incompleta),
+      extractionWarnings:Array.isArray(reference.advertencias)?reference.advertencias:[],
+      apilable:true,acostarse:false,sobresalir:false,fragil:false,peligrosa:false
+    };
+  });
 }
 function extractPackingListText(input){
   const source=String(input??"");
-  const lines=source.split(/\r?\n/).map(line=>stripPageMarkers(line).trim()).filter(Boolean);
+  const lines=mergeExtractedLines(source.split(/\r?\n/).map(line=>stripPageMarkers(line).trim()));
   const references=[];
   const units=new Set();
-  const headerPattern=/^(?:largo|length|longitud|ancho|width|alto|height|peso|weight|qty|quantity|cantidad|description|descripcion|item|referencia|reference)(?:\s|$)/i;
+  const headerPattern=/^(?:largo|length|longitud|ancho|width|alto|height|peso|weight|qty|quantity|cantidad|description|descripcion|referencia|reference)(?:\s|$)|^(?:item|ítem)\s*$/i;
   lines.forEach((line,index)=>{
     const normalized=normalizePdfText(line);
     if(!normalized||/^(?:page|pagina|p[aá]gina)?\s*\d+(?:\s*\/\s*\d+)?$/.test(normalized)||headerPattern.test(normalized))return;
     const dimensions=extractedDimensions(line);
     const volumeMatch=/(?:volumen|volume|cbm|m3|m³)\s*[:=]?\s*([0-9][0-9.,]*)\s*(m3|m³|cbm|l|litros)?/i.exec(line);
     const volume=volumeMatch?parseNumber(volumeMatch[1])*(/^(l|litros)$/i.test(volumeMatch[2]||"")?0.001:1):null;
-    const weight=extractedValueAfter(line,["peso bruto","peso neto","peso total","peso","gross weight","net weight","weight","wt","gw"],"weight");
+    const weight=extractedValueAfter(line,["peso bruto unitario","peso neto unitario","peso unitario","gross weight per unit","net weight per unit","weight per unit","gross weight","net weight","peso bruto","peso neto","peso total","peso","weight","wt","gw"],"weight");
     const quantity=extractedValueAfter(line,["cantidad","cant","unidades","units","qty","quantity","piezas","pieces"],"quantity");
     const boxes=extractedPackaging(line);
     const reference=extractedReference(line);
@@ -494,6 +534,9 @@ function convertPdfMeasurement(measurement,defaultUnit){
  const unit=(measurement.unit||defaultUnit||"").toLowerCase();
  if(["mm"].includes(unit))return measurement.value/1000;
  if(["cm"].includes(unit))return measurement.value/100;
+ if(["in","inch","pulgada","pulgadas"].includes(unit))return measurement.value*0.0254;
+ if(["ft","pie","pies"].includes(unit))return measurement.value*0.3048;
+ if(["yd","yarda","yardas"].includes(unit))return measurement.value*0.9144;
  if(["kg"].includes(unit))return measurement.value/1000;
  if(["g"].includes(unit))return measurement.value/1000000;
  if(["t","ton","tons","tonelada","toneladas"].includes(unit))return measurement.value;
@@ -528,7 +571,7 @@ function detectPdfTableColumns(headerRows){
   const groupedItems = [];
   combinedItems.forEach(item => {
     const previous = groupedItems[groupedItems.length - 1];
-    if(previous && Math.abs(previous.x - item.x) < 1){
+    if(previous && Math.abs(previous.x - item.x) < 3){
       previous.text += " " + item.text;
       previous.width = Math.max(previous.width || 0, item.width || 0);
     }else{
@@ -548,21 +591,10 @@ function detectPdfTableColumns(headerRows){
     let score = directMatch?.score ?? null;
     let spanCount = 1;
 
-    if(!key && i < groupedItems.length - 1 && !claimedIndices.has(i + 1)){
-      const nextItem = groupedItems[i+1];
-      if(Math.abs(nextItem.x - (item.x + (item.width || 0))) < 50){
-        const combinedMatch = matchHeaderCategory(item.text + " " + nextItem.text);
-        key = combinedMatch?.key || null;
-        score = combinedMatch?.score ?? null;
-        if(key) spanCount = 2;
-      }
-    }
-
     if(key){
       claimedIndices.add(i);
-      if(spanCount > 1) claimedIndices.add(i + 1);
 
-      const fullHeaderText = (item.text + " " + (spanCount > 1 ? combinedItems[i+1].text : "")).toLowerCase();
+      const fullHeaderText = item.text.toLowerCase();
       let explicitUnit = "";
       if(/\b(mm)\b/i.test(fullHeaderText)) explicitUnit = "mm";
       else if(/\b(cm)\b/i.test(fullHeaderText)) explicitUnit = "cm";
@@ -576,7 +608,7 @@ function detectPdfTableColumns(headerRows){
         x: item.x,
         width: item.width || 40,
         unit: explicitUnit,
-        rawText: item.text + (spanCount > 1 ? " " + combinedItems[i+1].text : ""),
+        rawText: item.text,
         score
       });
     }
@@ -647,10 +679,13 @@ function pdfTableRecords(items){
   let detectedColumns = null;
 
   for(let i = 0; i < Math.min(rows.length - 1, 20); i++){
-    let cols = detectPdfTableColumns([rows[i]]);
-    if(!cols && i < rows.length - 1){
-      cols = detectPdfTableColumns([rows[i], rows[i+1]]);
+    const headerSignal=/(?:item|ítem|description|descripcion|reference|referencia|qty|quantity|cant\.?|unid\.?|dimensions|dimensiones|dimension|dim\.?|size|largo|ancho|alto|peso|weight)/i;
+    if(!headerSignal.test(rows[i].text))continue;
+    const headerRows=[];
+    for(let next=Math.max(0,i-2);next<Math.min(rows.length,i+3);next++){
+      if((next===i||!/\d/.test(rows[next].text))&&headerSignal.test(rows[next].text))headerRows.push(rows[next]);
     }
+    const cols=detectPdfTableColumns(headerRows);
 
     if(cols){
       bestHeaderIndex = i;
@@ -710,9 +745,11 @@ function pdfTableRecords(items){
       const rawH = parseNumber(extractCellFromRow(row, colMap.height));
 
       if(Number.isFinite(rawL) && Number.isFinite(rawW) && Number.isFinite(rawH)){
-        const unitL = colMap.len?.unit || (rawL > 4 ? "cm" : "m");
-        const unitW = colMap.width?.unit || (rawW > 4 ? "cm" : "m");
-        const unitH = colMap.height?.unit || (rawH > 4 ? "cm" : "m");
+        const dimensionUnitText=extractCellFromRow(row,colMap.dimUnit).toLowerCase();
+        const dimensionUnit=(dimensionUnitText.match(/mm|cm|m|in|inch|pulg(?:adas)?|ft|pies/i)||[])[0]||"";
+        const unitL = colMap.len?.unit || dimensionUnit || (rawL > 4 ? "cm" : "m");
+        const unitW = colMap.width?.unit || dimensionUnit || (rawW > 4 ? "cm" : "m");
+        const unitH = colMap.height?.unit || dimensionUnit || (rawH > 4 ? "cm" : "m");
 
         L = convertPdfMeasurement({ value: rawL, unit: unitL }, "cm");
         W = convertPdfMeasurement({ value: rawW, unit: unitW }, "cm");
@@ -725,7 +762,8 @@ function pdfTableRecords(items){
     const gwUnitVal = parseNumber(extractCellFromRow(row, colMap.gwUnit));
     const nwUnitVal = parseNumber(extractCellFromRow(row, colMap.nwUnit));
 
-    const unitGW = colMap.totalGw?.unit || colMap.gwUnit?.unit || "kg";
+    const rowWeightUnit=(extractCellFromRow(row,colMap.weightUnit).match(/kg|kgs|lb|lbs|g|ton(?:eladas?)?|t/i)||[])[0]||"";
+    const unitGW = colMap.totalGw?.unit || colMap.gwUnit?.unit || rowWeightUnit || "kg";
     const unitNW = colMap.totalNw?.unit || colMap.nwUnit?.unit || "kg";
 
     const toKg = (value, unit) => {
@@ -736,8 +774,9 @@ function pdfTableRecords(items){
       return value;
     };
 
+    const unitWeightIsPerItem=/unit|unitario|per unit|por unidad/i.test(colMap.gwUnit?.rawText||"");
     const rowGrossKg = Number.isFinite(gwTotVal) ? toKg(gwTotVal, unitGW)
-      : Number.isFinite(gwUnitVal) ? toKg(gwUnitVal, unitGW) * boxes
+      : Number.isFinite(gwUnitVal) ? toKg(gwUnitVal, unitGW) * (unitWeightIsPerItem ? quantity : boxes)
       : Number.isFinite(nwTotVal) ? toKg(nwTotVal, unitNW)
       : Number.isFinite(nwUnitVal) ? toKg(nwUnitVal, unitNW) * boxes
       : NaN;
@@ -754,19 +793,22 @@ function pdfTableRecords(items){
       ? cbmVal
       : (Number.isFinite(L) && Number.isFinite(W) && Number.isFinite(H) ? L * W * H * boxes : NaN);
 
-    if(!Number.isFinite(grossKg) || !Number.isFinite(volume) || !Number.isFinite(L)) continue;
+    const hasIdentity=Boolean(descText||refText||codeText);
+    const hasLoadData=Boolean(Number.isFinite(grossKg)||Number.isFinite(volume)||Number.isFinite(L)||Number.isFinite(W)||Number.isFinite(H)||Number.isFinite(qtyVal)||Number.isFinite(boxVal));
+    if(!hasIdentity&&!hasLoadData)continue;
 
     records.push({
       desc: description,
       q: quantity,
       boxes: boxes,
-      L: Number(L.toFixed(4)),
-      W: Number(W.toFixed(4)),
-      H: Number(H.toFixed(4)),
-      wt: (grossKg / 1000) / quantity,
-      gw: (grossKg / 1000) / quantity,
-      nw: (netKg / 1000) / quantity,
-      volume: Number(volume.toFixed(4)),
+      L: Number.isFinite(L)?Number(L.toFixed(4)):null,
+      W: Number.isFinite(W)?Number(W.toFixed(4)):null,
+      H: Number.isFinite(H)?Number(H.toFixed(4)):null,
+      wt: Number.isFinite(grossKg)?(grossKg / 1000) / quantity:null,
+      gw: Number.isFinite(grossKg)?(grossKg / 1000) / quantity:null,
+      nw: Number.isFinite(netKg)?(netKg / 1000) / quantity:null,
+      volume: Number.isFinite(volume)?Number(volume.toFixed(4)):null,
+      incomplete:Boolean(!Number.isFinite(grossKg)||!Number.isFinite(volume)||!Number.isFinite(L)||!Number.isFinite(W)||!Number.isFinite(H)),
       apilable: true,
       acostarse: false,
       sobresalir: false,
@@ -998,7 +1040,9 @@ async function importarPDF(file){
  renderPieces();
  updateDashboard();
 
- pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+ if(!pdfjsLib.GlobalWorkerOptions.workerSrc){
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+ }
  const documentPdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
  const lines=[], items=[];
  for(let pageNumber=1;pageNumber<=documentPdf.numPages;pageNumber++){
@@ -1022,6 +1066,11 @@ async function importarPDF(file){
  let text=normalizePdfText(lines.join(" "));
  let table=pdfTableRecords(items);
  let records=table.records;
+ let extractedTextResult=null;
+ if(!records.length){
+  extractedTextResult=extractPackingListText(lines.join("\n"));
+  if(extractedTextResult.referencias.length)records=extractedReferencesToPieces(extractedTextResult);
+ }
 
  // Strategy 2: Pattern-based extraction across lines
  if(!records.length && lines.length > 0){
@@ -1039,9 +1088,10 @@ async function importarPDF(file){
   $("excelHelp").textContent="PDF escaneado detectado. Intentando reconocer el texto con OCR, esto puede tardar unos segundos...";
   const ocrLines = await ocrPdfPages(documentPdf);
   if(ocrLines.length){
-   lines.push(...ocrLines);
-   text=normalizePdfText(lines.join(" "));
-   records = pdfPatternRecords(ocrLines);
+  lines.push(...ocrLines);
+  text=normalizePdfText(lines.join(" "));
+  extractedTextResult=extractPackingListText(ocrLines.join("\n"));
+  records = extractedTextResult.referencias.length ? extractedReferencesToPieces(extractedTextResult) : pdfPatternRecords(ocrLines);
    if(!records.length){
     const kv = pdfKeyValueRecord(ocrLines.join("\n"));
     if(kv) records = [kv];
