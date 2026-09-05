@@ -63,6 +63,7 @@ let vehicles = JSON.parse(localStorage.getItem("lt_vehicles")||"null") || BASE_V
 let pieces = [];
 let lastAnalysis = null;
 let editingIndex = null;
+let pdfTotalsOverride = null;
 
 function $(id){return document.getElementById(id)}
 function num(id){return parseFloat($(id).value)||0}
@@ -229,7 +230,7 @@ function totals(){
   const weight=(num("contMerc")+num("contTara"))*count/1000;
   return {weight,gw:weight,net:num("contMerc")*count/1000,volume:0,area:0,refs:count,maxL:0,maxW:0,maxH:0};
  }
- return pieces.reduce((a,p)=>{
+  const calculated=pieces.reduce((a,p)=>{
    const quantity=Number(p.q)||0;
    const boxes=Number(p.boxes)||quantity;
    const gross=Number(p.gw??p.wt)||0;
@@ -244,6 +245,8 @@ function totals(){
    a.maxH=Math.max(a.maxH,p.H);
    return a;
  },{weight:0,gw:0,net:0,volume:0,area:0,refs:pieces.length,maxL:0,maxW:0,maxH:0});
+  if(!pdfTotalsOverride)return calculated;
+  return {...calculated,...pdfTotalsOverride};
 }
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 
@@ -705,7 +708,7 @@ function pdfTableRecords(items){
   const startRowIdx = bestHeaderIndex + 1;
   const tableMinX = Math.min(...detectedColumns.map(column => column.minX));
   const tableMaxX = Math.max(...detectedColumns.map(column => column.maxX));
-  const summaryFooterPattern = /^(?:peso total|volumen total|area de piso total|referencias)\s*:?\b/i;
+  const summaryFooterPattern = /^(?:(?:\d+\s*[-.]?\s*)?(?:peso bruto|peso liquido|peso neto|peso total|volume?n total|volume?n|quant|cantidad|area de piso|referencias|total))\b/i;
 
   for(let r = startRowIdx; r < rows.length; r++){
     const row = rows[r];
@@ -730,9 +733,11 @@ function pdfTableRecords(items){
     const description = [refText, descText].filter(Boolean).join(" - ") || descText || refText || codeText || `Ítem ${records.length + 1}`;
 
     const qtyVal = parseNumber(extractCellFromRow(row, colMap.qty));
-    const boxVal = parseNumber(extractCellFromRow(row, colMap.boxes));
-    const quantity = Number.isFinite(qtyVal) && qtyVal > 0 ? qtyVal : Number.isFinite(boxVal) && boxVal > 0 ? boxVal : 1;
-    const boxes = Number.isFinite(boxVal) && boxVal > 0 ? boxVal : Number.isFinite(qtyVal) && qtyVal > 0 ? qtyVal : 1;
+    const rawBoxVal = parseNumber(extractCellFromRow(row, colMap.boxes));
+    const boxVal = sanitizePdfPackageCount(rawBoxVal, qtyVal);
+    const suspiciousBoxId=Number.isFinite(rawBoxVal)&&(rawBoxVal>9999 || rawBoxVal>=1000&&!Number.isFinite(qtyVal));
+    const quantity = suspiciousBoxId ? 1 : Number.isFinite(qtyVal) && qtyVal > 0 ? qtyVal : boxVal;
+    const boxes = boxVal;
 
     let L = NaN, W = NaN, H = NaN;
     const sizeStr = extractCellFromRow(row, colMap.size);
@@ -799,9 +804,13 @@ function pdfTableRecords(items){
       ? cbmVal
       : (Number.isFinite(L) && Number.isFinite(W) && Number.isFinite(H) ? L * W * H * boxes : NaN);
 
+    const hasDimensions=Number.isFinite(L)&&Number.isFinite(W)&&Number.isFinite(H);
     const hasIdentity=Boolean(descText||refText||codeText);
     const hasLoadData=Boolean(Number.isFinite(grossKg)||Number.isFinite(volume)||Number.isFinite(L)||Number.isFinite(W)||Number.isFinite(H)||Number.isFinite(qtyVal)||Number.isFinite(boxVal));
+    const secondaryRow=/^pallet\b|tipo de embalagem|nuestra ref|su ref|peso liquido un|peso bruto un|^cantidad$|^dimensiones$/i.test(normalized);
     if(!hasIdentity&&!hasLoadData)continue;
+    if(secondaryRow&&!Number.isFinite(grossKg)&&!Number.isFinite(cbmVal))continue;
+    if(colMap.size&&!hasDimensions)continue;
 
     records.push({
       desc: description,
@@ -907,6 +916,12 @@ function pdfPatternRecords(lines){
   return records;
 }
 
+function sanitizePdfPackageCount(value, quantity){
+  if(!Number.isFinite(value)||value<=0)return Number.isFinite(quantity)&&quantity>0?quantity:1;
+  if(value>9999 || (value>=1000 && (!Number.isFinite(quantity)||quantity<=0)))return 1;
+  return value;
+}
+
 function pdfKeyValueRecord(text){
   const normalized = normalizePdfText(text);
   
@@ -976,7 +991,25 @@ function pdfKeyValueRecord(text){
 
 function pdfTotals(text){
  const find=(aliases)=>{const match=new RegExp(`(?:${aliases.join("|")})\\s*[:=]?\\s*([0-9][0-9.,]*)\\s*(kg|cbm|m3|m³|pcs|piezas|cajas)?`,"i").exec(text);return match?parseNumber(match[1]):NaN};
- return {quantity:find(["cantidad total","total quantity","total pcs"]),boxes:find(["total de cajas","total cajas","total cartons","total ctns"]),net:find(["peso neto total","total nw"]),gross:find(["peso bruto total","total gw"]),volume:find(["volumen total","volume total","total cbm"])};
+ return {quantity:find(["cantidad total","total quantity","total pcs","quant\\.? de peças"]),boxes:find(["total de cajas","total cajas","total cartons","total ctns","quant\\.? de caixas"]),net:find(["peso neto total","total nw","peso líquido","peso liquido","peso neto"]),gross:find(["peso bruto total","total gw","peso bruto"]),volume:find(["volumen total","volume total","total cbm","volume?n total"])};
+}
+
+function pdfSummaryTotals(items){
+ const rows=pdfRows(items), result={};
+ const labels=[
+  {key:"gross",pattern:/(?:\d+\s*[-.]?\s*)?peso bruto(?: total)?/i},
+  {key:"net",pattern:/(?:\d+\s*[-.]?\s*)?peso (?:l[ií]quido|neto)(?: total)?/i},
+  {key:"volume",pattern:/(?:\d+\s*[-.]?\s*)?volume?n total/i},
+  {key:"boxes",pattern:/(?:\d+\s*[-.]?\s*)?quant\.? de caixas|(?:\d+\s*[-.]?\s*)?cantidad total de cajas/i}
+ ];
+ rows.forEach((row,index)=>row.items.forEach(label=>{
+  const match=labels.find(candidate=>candidate.pattern.test(label.text));
+  if(!match||Number.isFinite(result[match.key]))return;
+  const below=rows.slice(index+1).find(candidate=>candidate.y<row.y&&candidate.y>row.y-35);
+  const value=below?.items.filter(item=>item.x>=label.x-12&&item.x<=label.x+Math.max(label.width||0,80)+12).map(item=>parseNumber(item.text)).find(Number.isFinite);
+  if(Number.isFinite(value))result[match.key]=value;
+ }));
+ return result;
 }
 
 function comparePdfTotals(expected,actual){
@@ -1035,6 +1068,7 @@ async function importarPDF(file){
 
  // 1. LIMPIEZA COMPLETA: Cada importación inicia 100% desde cero
  pieces = [];
+ pdfTotalsOverride = null;
  lastAnalysis = null;
  editingIndex = -1;
  if($("pDesc")) $("pDesc").value = "";
@@ -1117,6 +1151,7 @@ async function importarPDF(file){
  renderPieces();
  updateDashboard();
 
+ const declaredTotals={...(table.totals||{}),...pdfSummaryTotals(items)};
  const importedTotals=records.reduce((a,record)=>{
    a.quantity+=Number(record.q)||0;
    a.boxes+=Number(record.boxes)||0;
@@ -1126,16 +1161,25 @@ async function importarPDF(file){
    return a;
  },{quantity:0,boxes:0,net:0,weight:0,volume:0});
 
- const mismatches=comparePdfTotals(table.totals||{},importedTotals);
+ const mismatches=comparePdfTotals(declaredTotals,importedTotals);
+ const severeMismatch=mismatches.some(item=>Math.abs(item.calculated-item.documentValue)>Math.max(Math.abs(item.documentValue),0.001));
+ if(severeMismatch){
+  pdfTotalsOverride={};
+  if(Number.isFinite(declaredTotals.gross))pdfTotalsOverride.weight=declaredTotals.gross/1000;
+  if(Number.isFinite(declaredTotals.net))pdfTotalsOverride.net=declaredTotals.net/1000;
+  if(Number.isFinite(declaredTotals.volume))pdfTotalsOverride.volume=declaredTotals.volume;
+  renderPieces();
+  updateDashboard();
+ }
 
  // MODO DEBUG estructurado en consola
  const debugTable = [
-   { "Métrica": "Referencias", "Declarado PDF": "-", "Calculado": importadas, "Diferencia": "-", "Estado": "OK" },
-   { "Métrica": "Piezas (Und)", "Declarado PDF": table.totals?.quantity ?? "N/D", "Calculado": importedTotals.quantity, "Diferencia": Number.isFinite(table.totals?.quantity) ? (importedTotals.quantity - table.totals.quantity) : "-", "Estado": (!Number.isFinite(table.totals?.quantity) || importedTotals.quantity === table.totals.quantity) ? "OK" : "REVISAR" },
-   { "Métrica": "Cajas / Bultos", "Declarado PDF": table.totals?.boxes ?? "N/D", "Calculado": importedTotals.boxes, "Diferencia": Number.isFinite(table.totals?.boxes) ? (importedTotals.boxes - table.totals.boxes) : "-", "Estado": (!Number.isFinite(table.totals?.boxes) || importedTotals.boxes === table.totals.boxes) ? "OK" : "REVISAR" },
-   { "Métrica": "Peso Neto (kg)", "Declarado PDF": table.totals?.net ? (table.totals.net).toFixed(2) : "N/D", "Calculado": (importedTotals.net * 1000).toFixed(2), "Diferencia": Number.isFinite(table.totals?.net) ? ((importedTotals.net * 1000) - table.totals.net).toFixed(2) + " kg" : "-", "Estado": (!Number.isFinite(table.totals?.net) || Math.abs((importedTotals.net * 1000) - table.totals.net) <= 1.0) ? "OK" : "REVISAR" },
-   { "Métrica": "Peso Bruto (kg)", "Declarado PDF": table.totals?.gross ? (table.totals.gross).toFixed(2) : "N/D", "Calculado": (importedTotals.weight * 1000).toFixed(2), "Diferencia": Number.isFinite(table.totals?.gross) ? ((importedTotals.weight * 1000) - table.totals.gross).toFixed(2) + " kg" : "-", "Estado": (!Number.isFinite(table.totals?.gross) || Math.abs((importedTotals.weight * 1000) - table.totals.gross) <= 1.0) ? "OK" : "REVISAR" },
-   { "Métrica": "Volumen (m³)", "Declarado PDF": table.totals?.volume ? (table.totals.volume).toFixed(2) : "N/D", "Calculado": (importedTotals.volume).toFixed(2), "Diferencia": Number.isFinite(table.totals?.volume) ? (importedTotals.volume - table.totals.volume).toFixed(2) + " m³" : "-", "Estado": (!Number.isFinite(table.totals?.volume) || Math.abs(importedTotals.volume - table.totals.volume) <= 0.1) ? "OK" : "REVISAR" }
+   { "Métrica": "Referencias", "Declarado PDF": Number.isFinite(declaredTotals.boxes) ? declaredTotals.boxes : "-", "Calculado": importadas, "Diferencia": Number.isFinite(declaredTotals.boxes) ? importadas-declaredTotals.boxes : "-", "Estado": Number.isFinite(declaredTotals.boxes)&&importadas!==declaredTotals.boxes ? "REVISAR" : "OK" },
+    { "Métrica": "Piezas (Und)", "Declarado PDF": declaredTotals.quantity ?? "N/D", "Calculado": importedTotals.quantity, "Diferencia": Number.isFinite(declaredTotals.quantity) ? (importedTotals.quantity - declaredTotals.quantity) : "-", "Estado": (!Number.isFinite(declaredTotals.quantity) || importedTotals.quantity === declaredTotals.quantity) ? "OK" : "REVISAR" },
+    { "Métrica": "Cajas / Bultos", "Declarado PDF": declaredTotals.boxes ?? "N/D", "Calculado": importedTotals.boxes, "Diferencia": Number.isFinite(declaredTotals.boxes) ? (importedTotals.boxes - declaredTotals.boxes) : "-", "Estado": (!Number.isFinite(declaredTotals.boxes) || importedTotals.boxes === declaredTotals.boxes) ? "OK" : "REVISAR" },
+    { "Métrica": "Peso Neto (kg)", "Declarado PDF": declaredTotals.net ? declaredTotals.net.toFixed(2) : "N/D", "Calculado": (importedTotals.net * 1000).toFixed(2), "Diferencia": Number.isFinite(declaredTotals.net) ? ((importedTotals.net * 1000) - declaredTotals.net).toFixed(2) + " kg" : "-", "Estado": (!Number.isFinite(declaredTotals.net) || Math.abs((importedTotals.net * 1000) - declaredTotals.net) <= 1.0) ? "OK" : "REVISAR" },
+    { "Métrica": "Peso Bruto (kg)", "Declarado PDF": declaredTotals.gross ? declaredTotals.gross.toFixed(2) : "N/D", "Calculado": (importedTotals.weight * 1000).toFixed(2), "Diferencia": Number.isFinite(declaredTotals.gross) ? ((importedTotals.weight * 1000) - declaredTotals.gross).toFixed(2) + " kg" : "-", "Estado": (!Number.isFinite(declaredTotals.gross) || Math.abs((importedTotals.weight * 1000) - declaredTotals.gross) <= 1.0) ? "OK" : "REVISAR" },
+    { "Métrica": "Volumen (m³)", "Declarado PDF": declaredTotals.volume ? declaredTotals.volume.toFixed(2) : "N/D", "Calculado": importedTotals.volume.toFixed(2), "Diferencia": Number.isFinite(declaredTotals.volume) ? (importedTotals.volume - declaredTotals.volume).toFixed(2) + " m³" : "-", "Estado": (!Number.isFinite(declaredTotals.volume) || Math.abs(importedTotals.volume - declaredTotals.volume) <= 0.1) ? "OK" : "REVISAR" }
  ];
 
  console.group(`🔍 [DEBUG PDF] Archivo: ${file.name}`);
@@ -1144,9 +1188,10 @@ async function importarPDF(file){
 
  if(importadas){
   if(mismatches.length){
-    alert(`Alerta: los datos calculados no coinciden exactamente con los totales del PDF (${mismatches.map(item=>`${item.name}: ${item.difference>0?"+":""}${item.difference.toFixed(2)}`).join(", ")}). Se conservaron los datos individuales extraídos.`);
+    alert(`Alerta: los datos calculados no coinciden con los totales del PDF (${mismatches.map(item=>`${item.name}: ${item.difference>0?"+":""}${item.difference.toFixed(2)}`).join(", ")}). ${severeMismatch?"Se mostrará el total declarado por el documento.":"Se conservaron los datos individuales extraídos."}`);
   }
-  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${importedTotals.boxes} cajas | ${(importedTotals.weight).toFixed(2)} t (${(importedTotals.weight*1000).toFixed(1)} kg) | ${importedTotals.volume.toFixed(2)} m³`;
+  const shownTotals=totals();
+  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(3)} t (${(shownTotals.weight*1000).toFixed(1)} kg) | ${shownTotals.volume.toFixed(2)} m³${severeMismatch?" | tomado del total declarado en el documento":""}`;
   $("excelHelp").textContent = statusMsg;
   alert(statusMsg);
  } else {
