@@ -703,14 +703,20 @@ function pdfTableRecords(items){
 
   const records = [];
   const startRowIdx = bestHeaderIndex + 1;
+  const tableMinX = Math.min(...detectedColumns.map(column => column.minX));
+  const tableMaxX = Math.max(...detectedColumns.map(column => column.maxX));
+  const summaryFooterPattern = /^(?:peso total|volumen total|area de piso total|referencias)\s*:?\b/i;
 
   for(let r = startRowIdx; r < rows.length; r++){
     const row = rows[r];
     const normalized = normalizePdfText(row.text);
 
+    if(summaryFooterPattern.test(normalized)) continue;
     if(/^(?:total|subtotal|totales|cantidad total|peso neto|peso bruto|volume total|volumen total|grand total|resumen)\b/i.test(normalized)) continue;
     if(detectPdfTableColumns([row])) continue;
     if(!/\d/.test(row.text)) continue;
+    const hasTableCell = row.items.some(item => item.x >= tableMinX && item.x < tableMaxX && Boolean(stripPageMarkers(item.text)));
+    if(!hasTableCell) continue;
 
     const totalGwCell = extractCellFromRow(row, colMap.totalGw);
     const gwUnitCell = extractCellFromRow(row, colMap.gwUnit);

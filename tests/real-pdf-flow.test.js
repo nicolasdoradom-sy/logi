@@ -49,7 +49,7 @@ function createContext() {
     clearTimeout() {},
     pdfjsLib
   };
-  vm.runInNewContext(`${source}\nthis.runImport = importarPDF; this.getPieces = () => pieces;`, context);
+  vm.runInNewContext(`${source}\nthis.runImport = importarPDF; this.getPieces = () => pieces; this.getPdfTableRecords = pdfTableRecords;`, context);
   return context;
 }
 
@@ -64,6 +64,26 @@ async function runFixture(fixture) {
   return context.getPieces();
 }
 
+async function runTableWithFooter(fixture) {
+  const filePath = path.join(__dirname, "fixtures", fixture);
+  const data = new Uint8Array(fs.readFileSync(filePath));
+  const documentPdf = await pdfjsLib.getDocument({ data }).promise;
+  const items = [];
+  for (let pageNumber = 1; pageNumber <= documentPdf.numPages; pageNumber++) {
+    const page = await documentPdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    items.push(...(content.items || []).map(item => ({
+      str: String(item.str || ""),
+      transform: item.transform
+    })));
+  }
+  const footerY = 50;
+  ["Peso total: 999 kg", "Volumen total: 999 m3", "Área de piso total: 999 m2", "Referencias: 999"].forEach((str, index) => {
+    items.push({ str, transform: [1, 0, 0, 1, 20, footerY - index * 12] });
+  });
+  return createContext().getPdfTableRecords(items);
+}
+
 (async () => {
   for (const testCase of cases) {
     const pieces = await runFixture(testCase.fixture);
@@ -72,6 +92,9 @@ async function runFixture(fixture) {
     assert.equal(incomplete, testCase.incomplete, `${testCase.fixture}: incompletas`);
     assert.equal(pieces.length - incomplete, testCase.complete, `${testCase.fixture}: completas`);
   }
+  const footerResult = await runTableWithFooter("tabla-bordes-peso-kg.pdf");
+  assert.equal(footerResult.records.length, 10, "El footer no debe convertirse en referencias");
+  assert.equal(footerResult.records.some(record => /^(?:peso total|volumen total|area de piso total|referencias)\b/i.test(record.desc)), false, "El footer no debe aparecer como descripción");
   console.log(`✅ Flujo PDF end-to-end validado para ${cases.length} fixtures reales.`);
 })().catch(error => {
   console.error(error);
