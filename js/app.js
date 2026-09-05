@@ -322,6 +322,106 @@ function importValue(keys,names){
 }
 function normalizePdfText(value){return stripPageMarkers(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim()}
 
+function roundExtracted(value){return Number.isFinite(value)?Number(value.toFixed(6)):null}
+function parseExtractedMeasurement(value, kind){
+  const match=String(value||"").match(/([+-]?[0-9][0-9.,]*)\s*(ton(?:eladas?)?\s*(?:corta|us)?|t\s*(?:corta|us)?|kg|kgs|kilos|lb|lbs|libras|g|gramos|mm|cm|m|mts|metros|in|inch|pulg(?:adas)?|ft|pies)?/i);
+  if(!match)return null;
+  const number=parseNumber(match[1]);
+  if(!Number.isFinite(number))return null;
+  const unit=(match[2]||"").toLowerCase().replace(/\s+/g," ").trim();
+  if(kind==="weight"){
+    const factor=/^(g|gramos)$/.test(unit)?0.001:/^(lb|lbs|libras)$/.test(unit)?0.453592:/^(oz|onza|onzas)$/.test(unit)?0.0283495:/^(ton corta|t corta|ton us|t us)$/.test(unit)?907.185:/^(ton|tonelada|toneladas|t)$/.test(unit)?1000:1;
+    return {value:number*factor,unit:unit||"kg",converted:unit!==""&&unit!=="kg"&&unit!=="kgs"&&unit!=="kilos"};
+  }
+  const factor=/^(mm)$/.test(unit)?0.1:/^(m|mts|metros)$/.test(unit)?100:/^(yd|yarda|yardas)$/.test(unit)?91.44:/^(in|inch|pulgadas?)$/.test(unit)?2.54:/^(ft|pies)$/.test(unit)?30.48:1;
+  return {value:number*factor,unit:unit||"cm",converted:unit!==""&&!/^(cm)$/.test(unit)};
+}
+function extractedValueAfter(text, labels, kind){
+  const label=labels.join("|");
+  const match=new RegExp(`(?:${label})\\s*(?:[:=\\-]|\\s+|(?=[0-9]))\\s*([+-]?[0-9][0-9.,]*\\s*(?:ton(?:eladas?)?\\s*(?:corta|us)?|t\\s*(?:corta|us)?|kg|kgs|kilos|lb|lbs|libras|oz|onzas|g|gramos|mm|cm|m|mts|metros|yd|yardas|in|inch|pulg(?:adas)?|ft|pies)?)`,`i`).exec(text);
+  return match?parseExtractedMeasurement(match[1],kind):null;
+}
+function extractedDimensions(text){
+  const combined=/([0-9][0-9.,]*)\s*[x×*]\s*([0-9][0-9.,]*)\s*[x×*]\s*([0-9][0-9.,]*)\s*(mm|cm|m|mts|metros|in|inch|pulg(?:adas)?|ft|pies)?/i.exec(text);
+  if(combined){
+    const unit=combined[4]||"cm";
+    return [1,2,3].map(index=>parseExtractedMeasurement(`${combined[index]} ${unit}`,"dimension"));
+  }
+  const compact=/\bL\s*([0-9][0-9.,]*)\s+A\s*([0-9][0-9.,]*)\s+H\s*([0-9][0-9.,]*)\s*(mm|cm|m|mts|metros|in|inch|pulg(?:adas)?|ft|pies)?\b/i.exec(text);
+  if(compact){
+    const unit=compact[4]||"cm";
+    return [1,2,3].map(index=>parseExtractedMeasurement(`${compact[index]} ${unit}`,"dimension"));
+  }
+  const values=[];
+  ["largo|longitud|length|long|lgth|l", "ancho|anchura|width|anch|w", "alto|altura|height|alt|h"].forEach(labels=>{
+    const measurement=extractedValueAfter(text,labels.split("|"),"dimension");
+    values.push(measurement);
+  });
+  return values.every(Boolean)?values:null;
+}
+function extractedPackaging(text){
+  const match=/(?:bultos?|cajas?|cartons?|boxes|packages?|paquetes?|pallets?|palets?)\s*[:=x-]?\s*([0-9][0-9.,]*)/i.exec(text);
+  return match?parseNumber(match[1]):null;
+}
+function extractedDescription(text){
+  const match=/(?:descripci[oó]n(?: de la mercanc[ií]a)?|description|commodity|producto|product|item|carga|mercanc[ií]a)\s*[:=-]\s*([^;|]+)/i.exec(text);
+  if(match)return match[1].replace(/\s+(?:(?:qty|quantity|cantidad|cant|peso|weight|wt|gw|bultos?|cajas?|volume|volumen|largo|longitud|length|ancho|width|alto|height)\b).*$/i,"").replace(/\s+/g," ").trim();
+  return null;
+}
+function extractedReference(text){
+  const match=/(?:referencia|reference|sku|part\s*no\.?|codigo|c[oó]digo|ref\.?)\s*[:#=-]\s*([\w./-]+)/i.exec(text);
+  return match?match[1].trim():null;
+}
+function extractPackingListText(input){
+  const source=String(input??"");
+  const lines=source.split(/\r?\n/).map(line=>stripPageMarkers(line).trim()).filter(Boolean);
+  const references=[];
+  const units=new Set();
+  const headerPattern=/^(?:largo|length|longitud|ancho|width|alto|height|peso|weight|qty|quantity|cantidad|description|descripcion|item|referencia|reference)(?:\s|$)/i;
+  lines.forEach((line,index)=>{
+    const normalized=normalizePdfText(line);
+    if(!normalized||/^(?:page|pagina|p[aá]gina)?\s*\d+(?:\s*\/\s*\d+)?$/.test(normalized)||headerPattern.test(normalized))return;
+    const dimensions=extractedDimensions(line);
+    const volumeMatch=/(?:volumen|volume|cbm|m3|m³)\s*[:=]?\s*([0-9][0-9.,]*)\s*(m3|m³|cbm|l|litros)?/i.exec(line);
+    const volume=volumeMatch?parseNumber(volumeMatch[1])*(/^(l|litros)$/i.test(volumeMatch[2]||"")?0.001:1):null;
+    const weight=extractedValueAfter(line,["peso bruto","peso neto","peso total","peso","gross weight","net weight","weight","wt","gw"],"weight");
+    const quantity=extractedValueAfter(line,["cantidad","cant","unidades","units","qty","quantity","piezas","pieces"],"quantity");
+    const boxes=extractedPackaging(line);
+    const reference=extractedReference(line);
+    const description=extractedDescription(line);
+    const useful=Boolean(dimensions||volume!==null||weight||quantity||boxes||reference||description);
+    if(!useful||(!/\d/.test(line)&&!description&&!reference))return;
+    const warnings=[];
+    if(weight?.unit)units.add(weight.unit);
+    dimensions?.forEach(d=>{if(d?.unit)units.add(d.unit)});
+    if(volumeMatch?.[2])units.add(volumeMatch[2].toLowerCase());
+    const qty=quantity?.value>0?quantity.value:1;
+    if(!quantity){warnings.push("Cantidad no encontrada, se asumió 1");}
+    if(weight?.converted)warnings.push(`Peso convertido de ${weight.unit} a kg`);
+    if(dimensions?.some(d=>d.converted))warnings.push("Dimensiones convertidas a cm");
+    if(volume!==null)warnings.push("Se reportó volumen; largo, ancho y alto quedan en null");
+    if(!dimensions)warnings.push("Dimensiones no encontradas");
+    if(!weight)warnings.push("Peso no encontrado");
+    if(!description&&!reference)warnings.push(`Descripción y referencia no identificadas en la fila ${index+1}`);
+    const residualDescription=description||reference||line.replace(/\d[\d.,\s]*(?:x|×|\*)\s*\d[\d.,\s]*(?:x|×|\*)\s*\d[\d.,\s]*(?:mm|cm|m|in|ft)?/i," ").trim()||null;
+    references.push({
+      descripcion:description||residualDescription,
+      referencia:reference,
+      cantidad:roundExtracted(qty),
+      largo_cm:roundExtracted(dimensions?.[0]?.value),
+      ancho_cm:roundExtracted(dimensions?.[1]?.value),
+      alto_cm:roundExtracted(dimensions?.[2]?.value),
+      volumen_m3:roundExtracted(volume),
+      peso_kg:roundExtracted(weight?.value),
+      bultos:roundExtracted(boxes),
+      tipo_embalaje:/(pallet|palet|caja|crate|caj[oó]n|drum|tambor|crate)/i.exec(line)?.[1]||null,
+      incompleta:Boolean(!weight||(!dimensions&&volume===null)||!description&&!reference),
+      advertencias:warnings
+    });
+  });
+  return {referencias:references,resumen:{total_referencias:references.length,referencias_incompletas:references.filter(item=>item.incompleta).length,unidades_detectadas_origen:[...units],notas_generales:references.length?["Se consolidaron las filas de texto aprovechables."]: [source.trim()?"No se identificaron datos aprovechables de carga en el texto.":"El contenido recibido está vacío."]}};
+}
+
 function matchHeaderCategory(tokenText){
   const rawClean = tokenText.trim().toLowerCase();
   const nToken = normHeader(tokenText);
