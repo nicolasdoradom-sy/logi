@@ -35,7 +35,7 @@ function showPanel(n){
   updateDashboard();
   window.scrollTo({top:0,behavior:'smooth'});
 }
-function updateDashboard(){const t=typeof totals==='function'?totals():{weight:0,volume:0,refs:0};const a=typeof lastAnalysis!=='undefined'?lastAnalysis:null;const q=id=>document.getElementById(id);if(q('dashTon'))q('dashTon').textContent=(t.weight||0).toFixed(2)+' t';if(q('dashM3'))q('dashM3').textContent=(t.volume||0).toFixed(2)+' m³';if(q('dashRefs'))q('dashRefs').textContent=t.refs||0;updateQuoteButton();if(a&&typeof validation==='function'){const v=validation(a);q('dashStatus').textContent=v.level==='green'?'Aprobado':v.level==='yellow'?'Revisar':'No compatible';q('dashDot').className='status-dot '+v.level;}else{q('dashStatus').textContent='Pendiente';q('dashDot').className='status-dot';}}
+function updateDashboard(){const t=typeof totals==='function'?totals():{weight:0,volume:0,refs:0};const a=typeof lastAnalysis!=='undefined'?lastAnalysis:null;const q=id=>document.getElementById(id);if(q('dashTon'))q('dashTon').textContent=(t.weight||0).toFixed(5)+' t';if(q('dashM3'))q('dashM3').textContent=(t.volume||0).toFixed(3)+' m³';if(q('dashRefs'))q('dashRefs').textContent=t.refs||0;updateQuoteButton();if(a&&typeof validation==='function'){const v=validation(a);q('dashStatus').textContent=v.level==='green'?'Aprobado':v.level==='yellow'?'Revisar':'No compatible';q('dashDot').className='status-dot '+v.level;}else{q('dashStatus').textContent='Pendiente';q('dashDot').className='status-dot';}}
 function updateQuoteButton(){const button=$("quoteGenerateBtn");if(!button)return;const enabled=typeof hasCargo==='function'&&hasCargo();button.disabled=!enabled;button.setAttribute("aria-disabled",String(!enabled));}
 
 const BASE_VEHICLES = [
@@ -185,8 +185,8 @@ function renderPieces(){
   const hasWeight=Number.isFinite(p.wt);
   const vol = Number.isFinite(Number(p.volume))?Number(p.volume).toFixed(3):hasDimensions?(p.L*p.W*p.H*(p.boxes||p.q)).toFixed(3):"N/D";
   const area = hasDimensions?(p.L*p.W*(p.boxes||p.q)).toFixed(2):"N/D";
-  const pesoTotT = hasWeight?(p.wt*p.q).toFixed(3):"N/D";
-  const pesoTotKg = hasWeight?((p.wt*p.q)*1000).toFixed(1):"N/D";
+  const pesoTotT = hasWeight?(p.wt*p.q).toFixed(5):"N/D";
+  const pesoTotKg = hasWeight?((p.wt*p.q)*1000).toFixed(2):"N/D";
   const dimCm = hasDimensions?`${Math.round(p.L*100)} × ${Math.round(p.W*100)} × ${Math.round(p.H*100)} cm`:"N/D";
   const dimM = hasDimensions?`${p.L.toFixed(2)} × ${p.W.toFixed(2)} × ${p.H.toFixed(2)} m`:"N/D";
   return `<div class="piece"><div class="piece-grid">
@@ -199,7 +199,7 @@ function renderPieces(){
  <div style="display:flex;gap:5px"><button class="iconbtn" onclick="editarPieza(${i})" title="Editar">✎</button><button class="iconbtn" onclick="eliminarPieza(${i})" title="Eliminar">×</button></div>
  </div></div>`;
  }).join("");
- const t=totals();$("totalTon").textContent=t.weight.toFixed(3)+" t ("+(t.weight*1000).toFixed(1)+" kg)";$("totalM3").textContent=t.volume.toFixed(2)+" m³";$("totalArea").textContent=t.area.toFixed(2)+" m²";$("totalRefs").textContent=pieces.length;
+ const t=totals();$("totalTon").textContent=t.weight.toFixed(5)+" t ("+(t.weight*1000).toFixed(2)+" kg)";$("totalM3").textContent=t.volume.toFixed(3)+" m³";$("totalArea").textContent=t.area.toFixed(3)+" m²";$("totalRefs").textContent=pieces.length;
  renderMeasuresTable();
  updateLooseCargoContinue();
  updateQuoteButton();
@@ -253,9 +253,9 @@ function esc(s){return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",
 const PDF_HEADER_DEFINITIONS = [
   { key: "desc", aliases: ["descripcion de la mercancia", "descripcion del producto", "commodity description", "equipo / carga", "descripcion", "description", "detalle", "producto", "product", "mercancia", "mercancía", "articulo", "artículo", "material", "nombre", "especificacion", "desc", "commodity"] },
   { key: "size", aliases: ["dimensions (lxwxh cm)", "dimensions (cm)", "dimensiones (cm)", "dimensiones (m)", "medidas (cm)", "medidas (m)", "size/cbm", "size", "cbm", "dimensiones", "dimension", "medidas", "medida", "tamano", "lxwxh", "l x a x h", "dim (cm)", "dim (m)", "dim (mm)", "medidas (mts)", "dimensiones (mts)"] },
-  { key: "totalGw", aliases: ["total gw (kgs)", "total gw", "total gross weight", "peso bruto total", "gw total", "total weight", "total gross wt", "peso bruto tot", "peso total (t)", "peso total (ton)", "peso total (kg)", "peso total", "peso bruto (kg)", "peso (kg)", "peso (t)", "peso (ton)", "gross weight (kgs)", "gross weight", "peso bruto", "gw (kgs)", "gw", "peso", "weight"] },
+  { key: "totalGw", aliases: ["total gw (kgs)", "total gw", "total gross weight", "peso bruto total", "gw total", "total weight", "total gross wt", "peso bruto tot", "peso total (t)", "peso total (ton)", "peso total (kg)", "peso total", "peso bruto (kg)", "peso (kg)", "peso (t)", "peso (ton)", "gross weight (kgs)", "gross weight", "gross", "peso bruto", "gw (kgs)", "gw", "peso", "weight"] },
   { key: "weightUnit", aliases: ["unid peso", "unidad peso", "weight unit", "unit weight", "weight uom", "peso uom"] },
-  { key: "totalNw", aliases: ["total nw (kgs)", "total nw", "total net weight", "peso neto total", "nw total", "total net wt", "peso neto (kg)", "peso neto (t)", "peso neto", "net weight (kgs)", "net weight", "nw (kgs)", "nw"] },
+  { key: "totalNw", aliases: ["total nw (kgs)", "total nw", "total net weight", "peso neto total", "nw total", "total net wt", "peso neto (kg)", "peso neto (t)", "peso neto", "net weight (kgs)", "net weight", "net", "nw (kgs)", "nw"] },
   { key: "gwUnit", aliases: ["peso bruto unitario", "peso bruto por caja", "peso unitario", "gw/ctn", "gw/box", "peso x caja", "peso por bulto", "peso unit (kg)", "peso u (t)", "peso/u", "peso unit", "unit gw", "unit gross weight", "unit weight", "gw per ctn", "gw per box"] },
   { key: "nwUnit", aliases: ["peso neto unitario", "peso neto por caja", "nw/ctn", "nw/box", "p. neto unit", "unit nw", "unit net weight"] },
   { key: "pcsPerBox", aliases: ["unidades por caja", "piezas por caja", "pcs/ctn", "pcs/box", "pcs ctn", "pcs box", "pcsctn", "pcsbox", "und/caja"] },
@@ -267,7 +267,7 @@ const PDF_HEADER_DEFINITIONS = [
   { key: "dimUnit", aliases: ["unid dim", "unidad dimension", "unidad dimensiones", "dimension unit", "unit dimension", "dim unit", "dim"] },
   { key: "ref", aliases: ["referencia n°", "referencia no", "part number", "codigo producto", "referencia", "reference", "part no", "item code", "sku", "modelo", "ref"] },
   { key: "code", aliases: ["commodity item", "carton no", "awb item", "item no", "ctn no", "bulto no", "box no", "codigo", "code", "posicion", "ítem", "item", "pos", "nro", "no", "sec"] },
-  { key: "vol", aliases: ["volumen total", "volume (cbm)", "volume (m3)", "volumen (m3)", "cbm", "volumen", "volume", "m3", "cubicaje"] }
+  { key: "vol", aliases: ["volumen total", "volume (cbm)", "volume (m3)", "volumen (m3)", "cbm", "volumen", "volume", "m3", "cubicaje", "cubagem"] }
 ];
 
 function normHeader(h){return String(h||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,"")}
@@ -789,6 +789,9 @@ function pdfTableRecords(items){
   const startRowIdx = bestHeaderIndex + 1;
   const tableMinX = Math.min(...detectedColumns.map(column => column.minX));
   const tableMaxX = Math.max(...detectedColumns.map(column => column.maxX));
+  const documentText = rows.map(r => r.text).join(" ");
+  const packageCountMatch = /(?:embalajes?|packaging)\s*:\s*\(?\s*([0-9][0-9.,]*)/i.exec(documentText);
+  const declaredPackageCount = packageCountMatch ? parseNumber(packageCountMatch[1]) : NaN;
   const summaryFooterPattern = /^(?:(?:\d+\s*[-.]?\s*)?(?:peso bruto|peso liquido|peso neto|peso total|volume?n total|volume?n|quant|cantidad|area de piso|referencias|total))\b/i;
 
   for(let r = startRowIdx; r < rows.length; r++){
@@ -815,7 +818,7 @@ function pdfTableRecords(items){
 
     const qtyVal = parseNumber(extractCellFromRow(row, colMap.qty));
     const rawBoxVal = parseNumber(extractCellFromRow(row, colMap.boxes));
-    const boxVal = sanitizePdfPackageCount(rawBoxVal, qtyVal);
+    const boxVal = sanitizePdfPackageCount(rawBoxVal, Number.isFinite(declaredPackageCount) ? declaredPackageCount : qtyVal);
     const suspiciousBoxId=Number.isFinite(rawBoxVal)&&(rawBoxVal>9999 || rawBoxVal>=1000&&!Number.isFinite(qtyVal));
     const quantity = suspiciousBoxId ? 1 : Number.isFinite(qtyVal) && qtyVal > 0 ? qtyVal : boxVal;
     const boxes = boxVal;
@@ -913,9 +916,8 @@ function pdfTableRecords(items){
     });
   }
 
-  const docText = rows.map(r => r.text).join(" ");
   const findTot = (aliases) => {
-    const match = new RegExp(`(?:${aliases.join("|")})\\s*[:=]?\\s*([0-9][0-9.,]*)`, "i").exec(docText);
+    const match = new RegExp(`(?:${aliases.join("|")})\\s*[:=]?\\s*([0-9][0-9.,]*)`, "i").exec(documentText);
     return match ? parseNumber(match[1]) : NaN;
   };
 
@@ -924,7 +926,7 @@ function pdfTableRecords(items){
     boxes: findTot(["total de cajas", "total cajas", "total cartons", "total ctns", "total bultos"]),
     net: findTot(["peso neto total", "total nw", "peso neto"]),
     gross: findTot(["peso bruto total", "total gw", "peso bruto", "peso total"]),
-    volume: findTot(["volumen total", "volume total", "total cbm", "total m3"])
+    volume: findTot(["volumen total", "volume total", "total cbm", "total m3", "cubaje"])
   };
 
   return { records, totals };
@@ -1244,6 +1246,9 @@ async function importarPDF(file){
 
  const mismatches=comparePdfTotals(declaredTotals,importedTotals);
  const severeMismatch=mismatches.some(item=>Math.abs(item.calculated-item.documentValue)>Math.max(Math.abs(item.documentValue),0.001));
+  if(Number.isFinite(declaredTotals.volume)&&Math.abs(importedTotals.volume-declaredTotals.volume)<=0.01){
+    pdfTotalsOverride={...(pdfTotalsOverride||{}),volume:declaredTotals.volume};
+  }
  if(severeMismatch){
   pdfTotalsOverride={};
   if(Number.isFinite(declaredTotals.gross))pdfTotalsOverride.weight=declaredTotals.gross/1000;
@@ -1273,7 +1278,7 @@ async function importarPDF(file){
     alert(`Alerta: los datos calculados no coinciden con los totales del PDF (${mismatches.map(item=>`${item.name}: ${item.difference>0?"+":""}${item.difference.toFixed(2)}`).join(", ")}). ${severeMismatch?"Se mostrará el total declarado por el documento.":"Se conservaron los datos individuales extraídos."}`);
   }
   const shownTotals=totals();
-  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(3)} t (${(shownTotals.weight*1000).toFixed(1)} kg) | ${shownTotals.volume.toFixed(2)} m³${severeMismatch?" | tomado del total declarado en el documento":""}`;
+  const statusMsg = `PDF "${file.name}" procesado: ${importadas} ref(s) | ${Number.isFinite(declaredTotals.boxes)?declaredTotals.boxes:shownTotals.boxes} cajas | ${(shownTotals.weight).toFixed(5)} t (${(shownTotals.weight*1000).toFixed(2)} kg) | ${shownTotals.volume.toFixed(3)} m³${severeMismatch?" | tomado del total declarado en el documento":""}`;
   $("excelHelp").textContent = statusMsg;
   alert(statusMsg);
  } else {
